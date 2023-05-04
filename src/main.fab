@@ -1,0 +1,220 @@
+ct U WRITING_DONE  = 0
+ct U WRITING_WAIT  = 1
+ct U WRITING_READY = 2
+
+ct U STATE_WALKING = 0
+ct U STATE_CLOSE_BUBBLE = 1
+ct U STATE_SHOW_TEXT = 2
+
+vars
+    U writing = WRITING_WAIT
+    U char
+    UU row_addr = $2022
+    UU cur_addr = $2022
+    Bool show_bubble = false
+    U whatever = 0
+
+vars /game_vars
+    U px = 127
+    U py = 127
+
+vars /state_machine
+    U game_state = 0
+    Bool state_init = false
+
+chrrom
+    file(fmt, "../gfx/font.chr")
+    file(fmt, "../gfx/sprites.chr")
+
+charmap(" !\"#$%&'()*+,-./0123456789:;<=>?\nABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~\0", '\0')
+: stows /strings
+
+data /strings
+    [] welcome_text
+        (`Hello world!\n`
+         `It works!\n`
+         `Yippie!\n`)
+    [] other_text
+        (`This is more text\n`)
+
+fn state_walking()
+    if pads[0].pressed & BUTTON_A
+        game_state = STATE_SHOW_TEXT
+        state_init = true
+        decompress_string_init(@other_text)
+
+fn close_bubble()
+    if pads[0].pressed & BUTTON_B
+        show_bubble = false
+
+fn show_text()
+    if state_init
+        state_init = false
+        show_bubble = true
+        row_addr = $2022
+        cur_addr = $2022
+        writing = WRITING_WAIT
+
+    if writing == WRITING_WAIT
+        char = decompress_string()
+        if char == charmap.sentinel
+            writing = WRITING_DONE
+            game_state = STATE_CLOSE_BUBBLE
+        else if char == '\n'
+            row_addr += 32
+            cur_addr = row_addr
+        else
+            writing = WRITING_READY
+
+fn update_sprites()
+    // Push a sprite:
+    set_oam_x(0, px)     // x-position
+    set_oam_y(0, py - 1) // y-position
+    set_oam_p(0, $00)    // tile
+    set_oam_a(0, 0)      // options
+
+    set_oam_x(4, px + 1)     // x-position
+    set_oam_y(4, py + 6) // y-position
+    set_oam_p(4, $10)    // tile
+    set_oam_a(4, 0)      // options
+
+    // Clear the remainder of OAM
+    hide_oam(8)
+
+fn move_player()
+    // Move the player horizontally based on button presses:
+    if pads[0].held & BUTTON_LEFT
+        px -= 1
+    else if pads[0].held & BUTTON_RIGHT
+        px += 1
+
+    // Move the player vertically based on button presses:
+    if pads[0].held & BUTTON_UP
+        py -= 1
+    else if pads[0].held & BUTTON_DOWN
+        py += 1
+
+fn draw_hidden_bubble()
+    {PPUSTATUS}()
+    {PPUADDR}($20)
+    {PPUADDR}($00)
+    for UU i = 0; i != 160; i += 1
+        {PPUDATA}($00)
+
+
+fn draw_text_bubble()
+    UU row_index = $2001
+    UU index = $2001
+    ct U width = 20
+
+    {PPUSTATUS}()
+    {PPUADDR}(index.b)
+    {PPUADDR}(index.a)
+    {PPUDATA}($63)
+    index += 1
+
+    for U j = 0; j < width; j += 1
+        {PPUADDR}(index.b)
+        {PPUADDR}(index.a)
+        {PPUDATA}($68)
+        index += 1
+
+    {PPUADDR}(index.b)
+    {PPUADDR}(index.a)
+    {PPUDATA}($64)
+
+    for U j = 0; j < 3; j += 1
+        // next row
+        row_index += 32
+        index = row_index
+
+        {PPUADDR}(index.b)
+        {PPUADDR}(index.a)
+        {PPUDATA}($69)
+
+        index += width + 1
+        {PPUADDR}(index.b)
+        {PPUADDR}(index.a)
+        {PPUDATA}($6A)
+
+    // next row
+    row_index += 32
+    index = row_index
+
+    {PPUSTATUS}()
+    {PPUADDR}(index.b)
+    {PPUADDR}(index.a)
+    {PPUDATA}($65)
+    index += 1
+
+    for U j = 0; j < width; j += 1
+        {PPUADDR}(index.b)
+        {PPUADDR}(index.a)
+        {PPUDATA}($6B)
+        index += 1
+
+    {PPUADDR}(index.b)
+    {PPUADDR}(index.a)
+    {PPUDATA}($66)
+
+fn write_bubble_text()
+    {PPUSTATUS}()
+    {PPUADDR}(cur_addr.b)
+    {PPUADDR}(cur_addr.a)
+    {PPUDATA}(char)
+    cur_addr += 1
+
+nmi main_nmi()
+    // Update OAM and poll the pads:
+    ppu_upload_oam_poll_pads(0)
+
+    if ready
+        if show_bubble
+            if writing == WRITING_READY
+                draw_text_bubble()
+                write_bubble_text()
+                writing = WRITING_WAIT
+        else
+            if game_state == STATE_CLOSE_BUBBLE
+                draw_hidden_bubble()
+                game_state = STATE_WALKING
+
+    // Turn on rendering:
+    {PPUMASK}(PPUMASK_ON | PPUMASK_NO_CLIP)
+
+    // Reset the scroll
+    ppu_reset_scroll(0, 0)
+
+mode main()
+: nmi main_nmi
+    palette = example_palette
+    ppu_upload_palette()
+
+    // Clear the screen
+    {PPUSTATUS}()
+    {PPUADDR}($20)
+    {PPUADDR}($00)
+    for UU i = 0; i != 1024; i += 1
+        {PPUDATA}($00)
+
+    {PPUCTRL}(PPUCTRL_NMI_ON | PPUCTRL_SPR_PT_1000)
+
+    while true
+        update_pads()
+        move_player() 
+        update_sprites()
+
+        switch game_state
+            case STATE_WALKING
+                state_walking()
+                break
+
+            case STATE_CLOSE_BUBBLE
+                close_bubble()
+                break
+
+            case STATE_SHOW_TEXT
+                show_text()
+                break
+
+        nmi

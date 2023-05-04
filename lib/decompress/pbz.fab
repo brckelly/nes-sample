@@ -1,0 +1,94 @@
+/*
+ * Copyright (c) 2022, Patrick Bene
+ * This file is distributed under the Boost Software License, Version 1.0.
+ * See LICENSE_1_0.txt or https://www.boost.org/LICENSE_1_0.txt 
+ */
+
+// Code for decompressing the PBZ format.
+// PBZ is a simple run-length encoding based on PB53 by Damian Yerrick.
+// The decompressed size must be a multiple of 16 bytes, meaning it can't work with arbitrary data.
+// It is most useful for storing CHR data.
+
+// PBZ format:
+// -----------
+// A sequence of chunks that decompress to 8 bytes each.
+// The first byte of a chunk encodes its run-length encoding in a unary-encoded format.
+// For each bit of this byte, starting from the high bit:
+// -  A '0' bit means read a byte from the stream and output it.
+// -  A '1' bit means output the previous byte outputted for this chunk, or $00 if none was.
+
+// Feel free to change which group(s) these functions use.
+data /pbz
+
+// Reads from 'ptr' and uploads to PPUDATA for ('tiles' * 16) bytes of data.
+// A 'tiles' value of 0 is treated as a value of 256.
+asm fn load_pbz_tiles(CCC/pbz ptr, U tiles)
+: employs /pbz
+    vars
+        U run_mask
+    label write_plane
+        ldy #0
+        lda (&ptr.a), y
+        sec
+        rol
+        sta &run_mask
+        tya
+    label pb8_loop
+        bcs no_new_byte
+        iny
+        lda (&ptr.a), y
+    label no_new_byte
+        sta PPUDATA
+        asl &run_mask
+        bne pb8_loop
+        tya
+        adc &ptr.a
+        sta &ptr.a
+        bcc done_inc
+        inc &ptr.b
+    label done_inc
+        rts
+    default
+        lax &ptr.bank
+        switch ax
+    label plane_loop
+        jsr write_plane
+        jsr write_plane
+        dec &tiles
+        bne plane_loop
+        rts
+
+// Reads from 'ptr' and uploads to PPUDATA for ('chunks' * 8) bytes of data.
+// A 'chunks' value of 0 is treated as a value of 256.
+asm fn load_pbz_chunks(CCC/pbz ptr, U chunks)
+: employs /pbz
+    vars
+        U run_mask
+    default
+        lax &ptr.bank
+        switch ax
+    label write_plane
+        ldy #0
+        lda (&ptr.a), y
+        sec
+        rol
+        sta &run_mask
+        tya
+    label pb8_loop
+        bcs no_new_byte
+        iny
+        lda (&ptr.a), y
+    label no_new_byte
+        sta PPUDATA
+        asl &run_mask
+        bne pb8_loop
+        tya
+        adc &ptr.a
+        sta &ptr.a
+        bcc done_inc
+        inc &ptr.b
+    default plane_loop
+        dec &chunks
+        bne write_plane
+        rts
+
