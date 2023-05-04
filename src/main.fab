@@ -204,6 +204,9 @@ mode main()
         move_player() 
         update_sprites()
 
+        if pads[1].held & BUTTON_A
+            whatever = 1
+            
         switch game_state
             case STATE_WALKING
                 state_walking()
